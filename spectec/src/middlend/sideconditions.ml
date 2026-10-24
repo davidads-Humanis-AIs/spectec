@@ -3,6 +3,8 @@ This transformation make explicit the following implicit side conditions
 of terms in premises and conclusions:
 
  * Array access          a[i]         i < |a|
+ * Array slice           a[i : n]     i + n <= |a|
+ * Array update          a[[i] = e]   i < |a|, and likewise for longer paths
  * Joint iteration       e*{v1,v2}    |v1*| = |v2*|
  * Option projection     !(e)         e =!= null
 
@@ -49,6 +51,13 @@ let iter_side_conditions _env ((iter, vs) : iterexp) : prem list =
   | ListN _, _ -> []
   | _ -> []
 
+(* The expression that reads the location an update path points to *)
+let rec exp_of_path e p = match p.it with
+  | RootP -> e
+  | IdxP (p1, e1) -> IdxE (exp_of_path e p1, e1) $$ p.at % p.note
+  | SliceP (p1, e1, e2) -> SliceE (exp_of_path e p1, e1, e2) $$ p.at % p.note
+  | DotP (p1, atom) -> DotE (exp_of_path e p1, atom) $$ p.at % p.note
+
 (* Expr traversal *)
 let rec t_exp env e : prem list =
   (* First the conditions to be generated here *)
@@ -57,6 +66,12 @@ let rec t_exp env e : prem list =
     []  (* TODO *)
   | IdxE (exp1, exp2) ->
     [IfPr (CmpE (`LtOp, `NatT, exp2, LenE exp1 $$ e.at % exp2.note) $$ e.at % (BoolT $ e.at)) $ e.at]
+  | SliceE (exp1, exp2, exp3) ->
+    let exp23 = match exp2.it with
+      | NumE (`Nat n) when Z.equal n Z.zero -> exp3
+      | _ -> BinE (`AddOp, `NatT, exp2, exp3) $$ e.at % exp2.note
+    in
+    [IfPr (CmpE (`LeOp, `NatT, exp23, lenE exp1) $$ e.at % Il.Origin.slice_bound e.at) $ e.at]
   | TheE exp ->
     [IfPr (CmpE (`NeOp, `BoolT, exp, OptE None $$ e.at % exp.note) $$ e.at % (BoolT $ e.at)) $ e.at]
   | IterE ({it= CmpE (`EqOp, _,  _, _); _}, iterexp) -> iter_side_conditions env iterexp
@@ -88,7 +103,7 @@ let rec t_exp env e : prem list =
   -> t_exp env exp1 @ t_exp env exp2 @ t_exp env exp3
   | UpdE (exp1, path, exp2)
   | ExtE (exp1, path, exp2)
-  -> t_exp env exp1 @ t_path env path @ t_exp env exp2
+  -> t_exp env (exp_of_path exp1 path) @ t_exp env exp2
   | CallE (_, args)
   -> List.concat_map (t_arg env) args
   | CaseE (_, exp, _)
@@ -110,12 +125,6 @@ and t_iterexp env (iter, _) = t_iter env iter
 and t_iter env = function
   | ListN (e, _) -> t_exp env e
   | _ -> []
-
-and t_path env path = match path.it with
-  | RootP -> []
-  | IdxP (path, e) -> t_path env path @ t_exp env e
-  | SliceP (path, e1, e2) -> t_path env path @ t_exp env e1 @ t_exp env e2
-  | DotP (path, _) -> t_path env path
 
 and t_arg env arg = match arg.it with
   | ExpA exp -> t_exp env exp
@@ -150,6 +159,9 @@ let is_true_exp env e =
 let is_true_prem env prem =
   match prem.it with
   | IfPr e -> is_true_exp env e
+  (* (if i <= n)^(i<n), from a slice x^n[0 : i] *)
+  | IterPr ({it = IfPr {it = CmpE (`LeOp, _, {it = VarE x; _}, n'); _}; _}, (ListN (n, Some x'), _))
+    when x.it = x'.it && Il.Eq.eq_exp n n' -> true
   | _ -> false
 
 (* Does prem1 obviously imply prem2? *)
@@ -169,17 +181,36 @@ let rec flatten_empty_iter prem =
     | _ -> IterPr (prem'', iterexp) $ prem.at)
   | _ -> prem
 
+(* A slice bound that makes a premise written in the rule redundant also stands
+   for that premise, and loses its insertion marker *)
+let rec unmark prem =
+  match prem.it with
+  | IfPr e when Il.Origin.is_slice_bound e.note -> IfPr {e with note = BoolT $ e.note.at} $ prem.at
+  | IterPr (prem', iterexp) -> IterPr (unmark prem', iterexp) $ prem.at
+  | _ -> prem
+
+(* Like Util.Lib.List.nub implies, on premises paired with whether they are
+   generated. A kept premise keeps its marker only if every premise it makes
+   redundant was generated too. *)
+let rec nub_prems = function
+  | [] -> []
+  | (_, prem) :: prems ->
+    let dropped, kept = List.partition (fun (_, prem') -> implies prem prem') prems in
+    let prem' = if List.for_all fst dropped then prem else unmark prem in
+    prem' :: nub_prems kept
+
 let reduce_prems env prems = prems
-  |> List.map flatten_empty_iter
-  |> Util.Lib.List.filter_not (is_true_prem env)
-  |> Util.Lib.List.nub implies
+  |> List.map (fun (gen, prem) -> (gen, flatten_empty_iter prem))
+  |> List.filter (fun (_, prem) -> not (is_true_prem env prem))
+  |> nub_prems
 
 let t_rule' env = function
   | RuleD (id, params, mixop, exp, prems) ->
     let env' = Il.Env.env_of_params env params in
     let prems' = t_prems env' prems in
     let extra_prems = t_exp env' exp in
-    let reduced_prems = reduce_prems env (extra_prems @ prems') in
+    let generated prem = (not (List.memq prem prems), prem) in
+    let reduced_prems = reduce_prems env (List.map generated (extra_prems @ prems')) in
     RuleD (id, params, mixop, exp, reduced_prems)
 
 let t_rule env x = { x with it = t_rule' env x.it }

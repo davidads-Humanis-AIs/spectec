@@ -30319,6 +30319,7 @@ relation Step_pure: `%~>%`(instr*, instr*)
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
   rule vreplace_lane{c_1 : vec_(V128_Vnn), Lnn : Lnn, c_2 : num_($lunpack(Lnn)), M : M, i : laneidx, c : vec_(V128_Vnn)}:
     `%~>%`([VCONST_instr(V128_vectype, c_1) CONST_instr($lunpack(Lnn), c_2) VREPLACE_LANE_instr(`%X%`_shape(Lnn, M), i)], [VCONST_instr(V128_vectype, c)])
+    -- if (i!`%`_laneidx.0 < |$lanes_(`%X%`_shape(Lnn, M), c_1)|)
     -- if (c = $inv_lanes_(`%X%`_shape(Lnn, M), $lanes_(`%X%`_shape(Lnn, M), c_1)[[i!`%`_laneidx.0] = $lpacknum_(Lnn, c_2)]))
 
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
@@ -30562,6 +30563,7 @@ relation Step_read: `%~>%`(config, instr*)
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
   rule `load-num-val`{z : state, at : addrtype, i : num_((at : addrtype <: numtype)), nt : numtype, x : idx, ao : memarg, c : num_(nt)}:
     `%~>%`(`%;%`_config(z, [CONST_instr((at : addrtype <: numtype), i) LOAD_instr(nt, ?(), x, ao)]), [CONST_instr(nt, c)])
+    -- if (((i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) + ((($size(nt) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) <= |$mem(z, x).BYTES_meminst|)
     -- if ($nbytes_(nt, c) = $mem(z, x).BYTES_meminst[(i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) : ((($size(nt) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)])
 
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
@@ -30572,6 +30574,7 @@ relation Step_read: `%~>%`(config, instr*)
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
   rule `load-pack-val`{z : state, at : addrtype, i : num_((at : addrtype <: numtype)), Inn : Inn, n : n, sx : sx, x : idx, ao : memarg, c : iN(n)}:
     `%~>%`(`%;%`_config(z, [CONST_instr((at : addrtype <: numtype), i) LOAD_instr((Inn : Inn <: numtype), ?(`%_%`_loadop_(`%`_sz(n,), sx)), x, ao)]), [CONST_instr((Inn : Inn <: numtype), $extend__(n, $size((Inn : Inn <: numtype)), sx, c))])
+    -- if (((i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) + (((n : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) <= |$mem(z, x).BYTES_meminst|)
     -- if ($ibytes_(n, c) = $mem(z, x).BYTES_meminst[(i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) : (((n : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)])
 
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
@@ -30582,6 +30585,7 @@ relation Step_read: `%~>%`(config, instr*)
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
   rule `vload-num-val`{z : state, at : addrtype, i : num_((at : addrtype <: numtype)), x : idx, ao : memarg, c : vec_(V128_Vnn)}:
     `%~>%`(`%;%`_config(z, [CONST_instr((at : addrtype <: numtype), i) VLOAD_instr(V128_vectype, ?(), x, ao)]), [VCONST_instr(V128_vectype, c)])
+    -- if (((i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) + ((($vsize(V128_vectype) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) <= |$mem(z, x).BYTES_meminst|)
     -- if ($vbytes_(V128_vectype, c) = $mem(z, x).BYTES_meminst[(i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) : ((($vsize(V128_vectype) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)])
 
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
@@ -30592,6 +30596,7 @@ relation Step_read: `%~>%`(config, instr*)
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
   rule `vload-pack-val`{z : state, at : addrtype, i : num_((at : addrtype <: numtype)), K : K, M : M, sx : sx, x : idx, ao : memarg, c : vec_(V128_Vnn), `j*` : iN(K)*, Jnn : Jnn}:
     `%~>%`(`%;%`_config(z, [CONST_instr((at : addrtype <: numtype), i) VLOAD_instr(V128_vectype, ?(`SHAPE%X%_%`_vloadop_(`%`_sz(K,), M, sx)), x, ao)]), [VCONST_instr(V128_vectype, c)])
+    -- (if ((((i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) + ((((k * K) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) + (((K : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) <= |$mem(z, x).BYTES_meminst|))^(k<M!`%`_M.0){}
     -- (if ($ibytes_(K, j) = $mem(z, x).BYTES_meminst[((i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) + ((((k * K) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) : (((K : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)]))^(k<M!`%`_M.0){j <- `j*`}
     -- if ((c = $inv_lanes_(`%X%`_shape((Jnn : Jnn <: lanetype), M), $extend__(K, $jsizenn(Jnn), sx, j)^M!`%`_M.0{j <- `j*`})) /\ ($jsizenn(Jnn) = (K * 2)))
 
@@ -30603,6 +30608,7 @@ relation Step_read: `%~>%`(config, instr*)
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
   rule `vload-splat-val`{z : state, at : addrtype, i : num_((at : addrtype <: numtype)), N : N, x : idx, ao : memarg, c : vec_(V128_Vnn), j : iN(N), Jnn : Jnn, M : M}:
     `%~>%`(`%;%`_config(z, [CONST_instr((at : addrtype <: numtype), i) VLOAD_instr(V128_vectype, ?(SPLAT_vloadop_(`%`_sz(N,))), x, ao)]), [VCONST_instr(V128_vectype, c)])
+    -- if (((i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) + (((N : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) <= |$mem(z, x).BYTES_meminst|)
     -- if ($ibytes_(N, j) = $mem(z, x).BYTES_meminst[(i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) : (((N : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)])
     -- if (N = $jsize(Jnn))
     -- if ((M!`%`_M.0 : nat <:> rat) = ((128 : nat <:> rat) / (N : nat <:> rat)))
@@ -30616,6 +30622,7 @@ relation Step_read: `%~>%`(config, instr*)
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
   rule `vload-zero-val`{z : state, at : addrtype, i : num_((at : addrtype <: numtype)), N : N, x : idx, ao : memarg, c : vec_(V128_Vnn), j : iN(N)}:
     `%~>%`(`%;%`_config(z, [CONST_instr((at : addrtype <: numtype), i) VLOAD_instr(V128_vectype, ?(ZERO_vloadop_(`%`_sz(N,),)), x, ao)]), [VCONST_instr(V128_vectype, c)])
+    -- if (((i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) + (((N : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) <= |$mem(z, x).BYTES_meminst|)
     -- if ($ibytes_(N, j) = $mem(z, x).BYTES_meminst[(i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) : (((N : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)])
     -- if (c = $extend__(N, 128, U_sx, j))
 
@@ -30627,9 +30634,11 @@ relation Step_read: `%~>%`(config, instr*)
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
   rule `vload_lane-val`{z : state, at : addrtype, i : num_((at : addrtype <: numtype)), c_1 : vec_(V128_Vnn), N : N, x : idx, ao : memarg, j : laneidx, c : vec_(V128_Vnn), k : iN(N), Jnn : Jnn, M : M}:
     `%~>%`(`%;%`_config(z, [CONST_instr((at : addrtype <: numtype), i) VCONST_instr(V128_vectype, c_1) VLOAD_LANE_instr(V128_vectype, `%`_sz(N,), x, ao, j)]), [VCONST_instr(V128_vectype, c)])
+    -- if (((i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) + (((N : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) <= |$mem(z, x).BYTES_meminst|)
     -- if ($ibytes_(N, k) = $mem(z, x).BYTES_meminst[(i!`%`_num_.0 + ao.OFFSET_memarg!`%`_u64.0) : (((N : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)])
     -- if (N = $jsize(Jnn))
     -- if ((M!`%`_M.0 : nat <:> rat) = (($vsize(V128_vectype) : nat <:> rat) / (N : nat <:> rat)))
+    -- if (j!`%`_laneidx.0 < |$lanes_(`%X%`_shape((Jnn : Jnn <: lanetype), M), c_1)|)
     -- if (c = $inv_lanes_(`%X%`_shape((Jnn : Jnn <: lanetype), M), $lanes_(`%X%`_shape((Jnn : Jnn <: lanetype), M), c_1)[[j!`%`_laneidx.0] = `%`_lane_(k!`%`_iN.0,)]))
 
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
@@ -30755,6 +30764,7 @@ relation Step_read: `%~>%`(config, instr*)
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
   rule `array.new_elem-alloc`{z : state, i : num_(I32_numtype), n : n, x : idx, y : idx, `ref*` : ref*}:
     `%~>%`(`%;%`_config(z, [CONST_instr(I32_numtype, i) CONST_instr(I32_numtype, `%`_num_(n,)) `ARRAY.NEW_ELEM`_instr(x, y)]), (ref : ref <: instr)^n{ref <- `ref*`} ++ [`ARRAY.NEW_FIXED`_instr(x, `%`_u32(n,))])
+    -- if ((i!`%`_num_.0 + n) <= |$elem(z, y).REFS_eleminst|)
     -- if (ref^n{ref <- `ref*`} = $elem(z, y).REFS_eleminst[i!`%`_num_.0 : n])
 
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
@@ -30768,6 +30778,7 @@ relation Step_read: `%~>%`(config, instr*)
     `%~>%`(`%;%`_config(z, [CONST_instr(I32_numtype, i) CONST_instr(I32_numtype, `%`_num_(n,)) `ARRAY.NEW_DATA`_instr(x, y)]), $const(!($cunpack(zt)), $cunpacknum_(zt, c))^n{c <- `c*`} ++ [`ARRAY.NEW_FIXED`_instr(x, `%`_u32(n,))])
     -- (if ($cunpack(zt) =/= ?()))^n{}
     -- Expand: `%~~%`($type(z, x), ARRAY_comptype(`%%`_fieldtype(mut?{mut <- `mut?`}, zt)))
+    -- if ((i!`%`_num_.0 + ((((n * $zsize(zt)) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) <= |$data(z, y).BYTES_datainst|)
     -- if ($concatn_(syntax byte, $zbytes_(zt, c)^n{c <- `c*`}, ((($zsize(zt) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) = $data(z, y).BYTES_datainst[i!`%`_num_.0 : ((((n * $zsize(zt)) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)])
 
   ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
@@ -30913,6 +30924,7 @@ relation Step_read: `%~>%`(config, instr*)
     -- if ($cunpack(zt) =/= ?())
     -- otherwise
     -- Expand: `%~~%`($type(z, x), ARRAY_comptype(`%%`_fieldtype(mut?{mut <- `mut?`}, zt)))
+    -- if ((j!`%`_num_.0 + ((($zsize(zt) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)) <= |$data(z, y).BYTES_datainst|)
     -- if ($zbytes_(zt, c) = $data(z, y).BYTES_datainst[j!`%`_num_.0 : ((($zsize(zt) : nat <:> rat) / (8 : nat <:> rat)) : rat <:> nat)])
 
 ;; ../../../../specification/wasm-latest/4.3-execution.instructions.spectec
@@ -36003,6 +36015,36 @@ def $testfalse(Bool : Bool($sidef(11))) : Bool(false)
   ;; test.spectec
   def $testfalse{b : Bool($sidef(11))}(b) = b
 
+;; test.spectec
+syntax cell =
+{
+  DATA nat*
+}
+
+;; test.spectec
+relation TestSlice: `%;%;%|-%`(nat*, nat, nat, nat*)
+  ;; test.spectec
+  rule _{`n*` : nat*, i : nat, j : nat}:
+    `%;%;%|-%`(n*{n <- `n*`}, i, j, n*{n <- `n*`}[i : j])
+
+;; test.spectec
+relation TestUpdate: `%;%;%;%;%|-%`(cell*, nat, nat, nat, nat*, cell*)
+  ;; test.spectec
+  rule _{`c*` : cell*, i : nat, j : nat, m : nat, `n*` : nat*}:
+    `%;%;%;%;%|-%`(c*{c <- `c*`}, i, j, m, n*{n <- `n*`}, c*{c <- `c*`}[[i].DATA_cell[j : m] = n*{n <- `n*`}])
+
+;; test.spectec
+relation TestExtend: `%;%;%|-%`(nat**, nat, nat*, nat**)
+  ;; test.spectec
+  rule _{`n**` : nat**, i : nat, `m*` : nat*}:
+    `%;%;%|-%`(n*{n <- `n*`}*{`n*` <- `n**`}, i, m*{m <- `m*`}, n*{n <- `n*`}*{`n*` <- `n**`}[[i] =++ m*{m <- `m*`}])
+
+;; test.spectec
+relation TestNested: `%;%;%;%|-%`(cell*, nat*, nat, nat*, cell*)
+  ;; test.spectec
+  rule _{`c*` : cell*, `n*` : nat*, i : nat, `m*` : nat*}:
+    `%;%;%;%|-%`(c*{c <- `c*`}, n*{n <- `n*`}, i, m*{m <- `m*`}, c*{c <- `c*`}[[n*{n <- `n*`}[i]].DATA_cell = m*{m <- `m*`}])
+
 == IL Validation...
 == Running pass totalize...
 
@@ -36054,6 +36096,36 @@ def $testtrue(Bool : Bool($sidef(1))) : Bool(true)
 def $testfalse(Bool : Bool($sidef(11))) : Bool(false)
   ;; test.spectec
   def $testfalse{b : Bool($sidef(11))}(b) = b
+
+;; test.spectec
+syntax cell =
+{
+  DATA nat*
+}
+
+;; test.spectec
+relation TestSlice: `%;%;%|-%`(nat*, nat, nat, nat*)
+  ;; test.spectec
+  rule _{`n*` : nat*, i : nat, j : nat}:
+    `%;%;%|-%`(n*{n <- `n*`}, i, j, n*{n <- `n*`}[i : j])
+
+;; test.spectec
+relation TestUpdate: `%;%;%;%;%|-%`(cell*, nat, nat, nat, nat*, cell*)
+  ;; test.spectec
+  rule _{`c*` : cell*, i : nat, j : nat, m : nat, `n*` : nat*}:
+    `%;%;%;%;%|-%`(c*{c <- `c*`}, i, j, m, n*{n <- `n*`}, c*{c <- `c*`}[[i].DATA_cell[j : m] = n*{n <- `n*`}])
+
+;; test.spectec
+relation TestExtend: `%;%;%|-%`(nat**, nat, nat*, nat**)
+  ;; test.spectec
+  rule _{`n**` : nat**, i : nat, `m*` : nat*}:
+    `%;%;%|-%`(n*{n <- `n*`}*{`n*` <- `n**`}, i, m*{m <- `m*`}, n*{n <- `n*`}*{`n*` <- `n**`}[[i] =++ m*{m <- `m*`}])
+
+;; test.spectec
+relation TestNested: `%;%;%;%|-%`(cell*, nat*, nat, nat*, cell*)
+  ;; test.spectec
+  rule _{`c*` : cell*, `n*` : nat*, i : nat, `m*` : nat*}:
+    `%;%;%;%|-%`(c*{c <- `c*`}, n*{n <- `n*`}, i, m*{m <- `m*`}, c*{c <- `c*`}[[n*{n <- `n*`}[i]].DATA_cell = m*{m <- `m*`}])
 
 == IL Validation after pass totalize...
 == Running pass sideconditions...
@@ -36109,6 +36181,42 @@ def $testtrue(Bool : Bool($sidef(1))) : Bool(true)
 def $testfalse(Bool : Bool($sidef(11))) : Bool(false)
   ;; test.spectec
   def $testfalse{b : Bool($sidef(11))}(b) = b
+
+;; test.spectec
+syntax cell =
+{
+  DATA nat*
+}
+
+;; test.spectec
+relation TestSlice: `%;%;%|-%`(nat*, nat, nat, nat*)
+  ;; test.spectec
+  rule _{`n*` : nat*, i : nat, j : nat}:
+    `%;%;%|-%`(n*{n <- `n*`}, i, j, n*{n <- `n*`}[i : j])
+    -- if ((i + j) <= |n*{n <- `n*`}|)
+
+;; test.spectec
+relation TestUpdate: `%;%;%;%;%|-%`(cell*, nat, nat, nat, nat*, cell*)
+  ;; test.spectec
+  rule _{`c*` : cell*, i : nat, j : nat, m : nat, `n*` : nat*}:
+    `%;%;%;%;%|-%`(c*{c <- `c*`}, i, j, m, n*{n <- `n*`}, c*{c <- `c*`}[[i].DATA_cell[j : m] = n*{n <- `n*`}])
+    -- if ((j + m) <= |c*{c <- `c*`}[i].DATA_cell|)
+    -- if (i < |c*{c <- `c*`}|)
+
+;; test.spectec
+relation TestExtend: `%;%;%|-%`(nat**, nat, nat*, nat**)
+  ;; test.spectec
+  rule _{`n**` : nat**, i : nat, `m*` : nat*}:
+    `%;%;%|-%`(n*{n <- `n*`}*{`n*` <- `n**`}, i, m*{m <- `m*`}, n*{n <- `n*`}*{`n*` <- `n**`}[[i] =++ m*{m <- `m*`}])
+    -- if (i < |n*{n <- `n*`}*{`n*` <- `n**`}|)
+
+;; test.spectec
+relation TestNested: `%;%;%;%|-%`(cell*, nat*, nat, nat*, cell*)
+  ;; test.spectec
+  rule _{`c*` : cell*, `n*` : nat*, i : nat, `m*` : nat*}:
+    `%;%;%;%|-%`(c*{c <- `c*`}, n*{n <- `n*`}, i, m*{m <- `m*`}, c*{c <- `c*`}[[n*{n <- `n*`}[i]].DATA_cell = m*{m <- `m*`}])
+    -- if (n*{n <- `n*`}[i] < |c*{c <- `c*`}|)
+    -- if (i < |n*{n <- `n*`}|)
 
 == IL Validation after pass sideconditions...
 == Complete.

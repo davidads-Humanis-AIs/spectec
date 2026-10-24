@@ -1098,6 +1098,7 @@ let translate_reduction ?(context_opt=None) reduction =
   |> Transpile.insert_nop
   (* Translate premises *)
   |> translate_prems prems
+  |> Transpile.keep_slice_bounds
 
 
 let translate_context_winstr winstr =
@@ -1143,13 +1144,30 @@ let rec translate_rgroup' (rule: rule_def) =
   (* Insert 'Let f be the current frame' *)
   let frame_instr = to_frame_instr (List.hd rgroup') in
 
-  let blocks = List.map (fun (k, (subgroup: rule_clause list)) ->
+  (* Translate the rules of all subgroups before merging any of them *)
+  let translated = List.map (fun (k, (subgroup: rule_clause list)) ->
     match k with
-    (* Normal case *)
     | None ->
       let winstr = extract_winstr (List.hd subgroup) rule.at in
       let inner_pop_instrs = translate_context_winstr winstr in
-      let blocks = List.map translate_reduction subgroup in
+      k, (subgroup, inner_pop_instrs, List.map translate_reduction subgroup)
+    | Some _ ->
+      let _, u_group = extract_pops subgroup in
+      let ctxt = extract_context (List.hd u_group) |> Option.get in
+      let head_instrs, middle_instr = translate_context ctxt in
+      k, (subgroup, head_instrs, List.map (translate_reduction ~context_opt:(Some middle_instr)) u_group)
+  ) subgroups in
+  let unmark =
+    Transpile.unmark_written_slice_bounds
+      (List.concat_map (fun (_, (_, _, blocks)) -> blocks) translated)
+  in
+
+  let blocks = List.map (fun (k, (subgroup, head_instrs, blocks)) ->
+    let blocks = List.map unmark blocks in
+    match k with
+    (* Normal case *)
+    | None ->
+      let inner_pop_instrs = head_instrs in
       let instrs =
         match blocks with
         | [b1; b2] when not (has_branch b1 || has_branch b2) -> [ eitherI (b1, b2) ] (* Either case *)
@@ -1162,10 +1180,9 @@ let rec translate_rgroup' (rule: rule_def) =
       let ctxt = extract_context (List.hd u_group) |> Option.get in
       let atom = case_of_case ctxt |> Mixop.head |> Option.get in
       let cond = ContextKindE atom $$ atom.at % boolT in
-      let head_instrs, middle_instr = translate_context ctxt in
       let is_otherwise = function [{it = OtherwiseI _; _}] -> true | _ -> false in
       let body_instrs =
-        List.map (translate_reduction ~context_opt:(Some middle_instr)) u_group
+        blocks
         (* TODO: Consider inserting otherwise to normal case also *)
         |> List.mapi (fun i instrs -> if i = 0 || is_otherwise instrs then instrs else [otherwiseI instrs])
         |> Transpile.merge_blocks
@@ -1177,7 +1194,7 @@ let rec translate_rgroup' (rule: rule_def) =
           []
         )
       ]
-  ) subgroups in
+  ) translated in
 
   let normal_block_opt, ctxt_blocks =
     match List.hd blocks with
@@ -1248,6 +1265,7 @@ and translate_rgroup (rule: rule_def) =
     |> Transpile.insert_nop
     |> List.concat_map (walker.walk_instr walker)
     |> Transpile.enhance_readability
+    |> Transpile.assert_slice_bounds
     |> Transpile.infer_assert
     |> Transpile.flatten_if
   in

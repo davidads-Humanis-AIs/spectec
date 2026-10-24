@@ -14,6 +14,9 @@ val flatten_if : instr list -> instr list
 val remove_state : algorithm -> algorithm
 val handle_frame : arg list -> instr list -> instr list
 val remove_sub : expr -> expr
+val keep_slice_bounds : instr list -> instr list
+val unmark_written_slice_bounds : instr list list -> instr list -> instr list
+val assert_slice_bounds : instr list -> instr list
 val infer_assert : instr list -> instr list
 val ensure_return :  instr list -> instr list
 val remove_exit : algorithm -> algorithm

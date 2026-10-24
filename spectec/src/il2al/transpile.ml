@@ -695,6 +695,15 @@ let rec trap_conds il =
   | [{it = IfI (c, il1, []); _}] -> Option.map (fun cs -> c :: cs) (trap_conds il1)
   | _ -> None
 
+(* Drop the insertion marker of a generated slice bound (see
+   assert_slice_bounds) *)
+let rec unmark_slice_bound c =
+  match c.it with
+  | IterE (c1, ie) -> {c with it = IterE (unmark_slice_bound c1, ie)}
+  | _ when Il.Origin.is_slice_bound c.note ->
+    {c with note = Il.Ast.BoolT $ c.note.at}
+  | _ -> c
+
 (* Walk the instructions, keeping the conditions of the enclosing ifs (knowns),
    the clauses that hold because an earlier instruction did not trap, and the
    expressions that have been evaluated (ev).
@@ -743,6 +752,15 @@ let remove_trapped_ifs instrs =
     match instr.it with
     | IfI (c, il1, _) when removable knowns clauses ev (il1 @ il') c c -> walk knowns clauses ev il1
     | IfI (c, _, il2) when removable knowns clauses ev (il2 @ il') c (neg c) -> walk knowns clauses ev il2
+    (* If c { If c' { ... } }, where c' implies c: a bounds premise that
+       comes before the conditions of its rule. Evaluating c' earlier, and not
+       evaluating c, must not fail. As c' now also stands for c, it is no
+       longer a generated slice bound. *)
+    | IfI (c, [{it = IfI (c', il1', []); _} as instr'], [])
+      when not (reads_stack c') && defined ev c' && defined ev c
+        && by_clauses (c' :: knowns) clauses c ->
+      let instr' = {instr' with it = IfI (unmark_slice_bound c', il1', [])} in
+      walk_instr knowns clauses ev il' instr'
     | IfI (c, il1, il2) ->
       let knowns1, knowns2 = if reads_stack c then knowns, knowns else c :: knowns, neg c :: knowns in
       let ev' = evaluated c ev in
@@ -1553,6 +1571,101 @@ let handle_frame params instrs =
   match List.find_opt (fun a -> is_frame_arg a || is_state_arg a) params with
   | Some a -> handle_framed_algo a instrs
   | None   -> handle_unframed_algo instrs
+
+(* Generated slice bounds as assertions, for reduction rules.
+   A bound `e1 + e2 <= |a|` without else that the sideconditions pass
+   generated for a slice, where the guarded instructions begin by reading the
+   slice a[e1 : e2], becomes an assertion, as infer_assert does for the
+   conditions of most rules. Without the generated bound, the read would come
+   at this point unguarded, so the assertion fails only where the read would
+   have.
+   Generated bounds carry an insertion marker (see Il.Origin),
+   which a premise written in the rule never has. A bound without it stays a
+   check: there, a false bound means that the rule does not apply. The marker
+   is dropped where a bound comes to stand for more than its read: when it
+   makes a written premise redundant (in the sideconditions pass), when it
+   replaces an enclosing condition (remove_trapped_ifs), and when it does not
+   guard its read directly in the AL of its rule (keep_slice_bounds, so that
+   no condition between the bound and the read can be removed later as
+   implied by the bound), and when it equals a condition written in a rule
+   of its group, which merging could make it stand for
+   (unmark_written_slice_bounds). *)
+let slice_bound_read il c =
+  let reads_slice ?ctx c a e1 e2 =
+    Il.Origin.is_slice_bound c.note &&
+    List.exists (fun (ctx', e) ->
+      same_ctx ctx ctx' &&
+      match e.it with
+      | AccE (a', {it = SliceP (e1', e2'); _}) ->
+        Eq.eq_expr a a' && Eq.eq_expr e1 e1' && Eq.eq_expr e2 e2'
+      | _ -> false
+    ) (evaluated_by (Free.free_expr c) il [])
+  in
+  match c.it with
+  | BinE (`LeOp, {it = BinE (`AddOp, e1, e2); _}, {it = LenE a; _}) ->
+    reads_slice c a e1 e2
+  | IterE ({it = BinE (`LeOp, {it = BinE (`AddOp, e1, e2); _}, {it = LenE a; _}); _} as c', ie) ->
+    (match index_only ie with
+    | Some ctx -> reads_slice ~ctx c' a e1 e2
+    | None -> false)
+  | _ -> false
+
+let map_slice_bounds f instrs =
+  let walk_instr walker instr =
+    let instrs = Walk.base_walker.walk_instr walker instr in
+    List.concat_map (fun i ->
+      match i.it with
+      | IfI (c, il, []) -> f i c il
+      | _ -> [ i ]
+    ) instrs
+  in
+  let walker = { Walk.base_walker with walk_instr } in
+  List.concat_map (walker.walk_instr walker) instrs
+
+(* Applied to the AL of each reduction rule, before its rules are merged *)
+let keep_slice_bounds =
+  map_slice_bounds (fun i c il ->
+    if slice_bound_read il c then [ i ]
+    else [ {i with it = IfI (unmark_slice_bound c, il, [])} ])
+
+(* Applied to the AL of the reduction rules of a group, after
+   keep_slice_bounds and before they are merged. Merging keeps one copy of
+   equal conditions, so a generated bound equal to a condition written in a
+   rule of the group, or to its negation, could come to stand for that
+   condition. Such a bound loses its marker, so that written conditions stay
+   checks. *)
+let unmark_written_slice_bounds blocks =
+  let rec is_marked c =
+    match c.it with
+    | IterE (c1, _) -> is_marked c1
+    | _ -> Il.Origin.is_slice_bound c.note
+  in
+  let rec conds instrs =
+    List.concat_map (fun i ->
+      match i.it with
+      | IfI (c, il1, il2) -> c :: conds il1 @ conds il2
+      | EitherI (il1, il2) -> conds il1 @ conds il2
+      | OtherwiseI il | EnterI (_, _, il) | ForEachI (_, il) -> conds il
+      | _ -> []
+    ) instrs
+  in
+  let written = List.filter (fun c -> not (is_marked c)) (List.concat_map conds blocks) in
+  let stands_for c = List.exists (fun c' -> eq_cond c c' || eq_cond c (neg c')) written in
+  let walk_instr walker instr =
+    let instr = match instr.it with
+      | IfI (c, il1, il2) when is_marked c && stands_for c ->
+        {instr with it = IfI (unmark_slice_bound c, il1, il2)}
+      | _ -> instr
+    in
+    Walk.base_walker.walk_instr walker instr
+  in
+  let walker = { Walk.base_walker with walk_instr } in
+  List.concat_map (walker.walk_instr walker)
+
+(* Applied for reduction rules, after enhance_readability *)
+let assert_slice_bounds =
+  map_slice_bounds (fun i c il ->
+    if slice_bound_read il c then assertI c ~at:c.at :: il else [ i ])
 
 (* Applied for reduction rules: infer assert from if *)
 let count_non_trapping_if instrs =

@@ -33,3 +33,29 @@ def $testtrue(b) = b
 
 def $testfalse(Bool($sidef(11))) : Bool(false)
 def $testfalse(b) = b
+
+
+;; Bounds of slices and update paths
+
+syntax cell = { DATA nat* }
+
+var c : cell
+var i : nat
+var j : nat
+
+relation TestSlice: nat*; nat; nat |- nat*
+relation TestUpdate: cell*; nat; nat; nat; nat* |- cell*
+relation TestExtend: nat**; nat; nat* |- nat**
+relation TestNested: cell*; nat*; nat; nat* |- cell*
+
+rule TestSlice:
+  n*; i; j |- n*[i : j]
+
+rule TestUpdate:
+  c*; i; j; m; n* |- c*[[i].DATA[j : m] = n*]
+
+rule TestExtend:
+  n**; i; m* |- n**[[i] =++ m*]
+
+rule TestNested:
+  c*; n*; i; m* |- c*[[(n*)[i]].DATA = m*]

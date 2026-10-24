@@ -331,3 +331,313 @@ the next instruction reads the same slices, and kept when nothing does:
  Return a
 - : unit = ()
 ```
+
+## Nested checks
+
+`If c { If c' { ... } }` becomes `If c' { ... }` when c' and the earlier trap
+checks imply c. This evaluates c' where it was not evaluated before, so c' must
+not be able to fail:
+
+```ocaml
+# let check c' = [
+    ifI (cmp `GtOp (var "n") (len (list "a")), [trap c'], []);
+    ifI (cmp `LeOp (var "n") (len (list "a")), [ifI (c', [return (nat 9)], [])], []);
+    return (nat 0)
+  ] in
+  show (check (cmp `EqOp (var "b" ~note:boolT) (boolE true ~note:boolT)));
+  show (check (cmp `EqOp (div (var "x") 2) (nat 0)));
+  show (check (iterE (var "b" ~note:boolT,
+    (ListN (div (var "x") 2, Some "k"), [("b", list "bs"); ("k", list "ks")])) ~note:boolT));;
+ If ((n > |a|)) {
+   If ((b = true)) {
+     Trap
+   }
+ }
+ If ((b = true)) {
+   Return 9
+ }
+ Return 0
+
+ If ((n > |a|)) {
+   If (($nat$(($rat$(x) / $rat$(2))) = 0)) {
+     Trap
+   }
+ }
+ If ((n <= |a|)) {
+   If (($nat$(($rat$(x) / $rat$(2))) = 0)) {
+     Return 9
+   }
+ }
+ Return 0
+
+ If ((n > |a|)) {
+   If (b^(k<$nat$(($rat$(x) / $rat$(2)))){b <- bs, k <- ks}) {
+     Trap
+   }
+ }
+ If ((n <= |a|)) {
+   If (b^(k<$nat$(($rat$(x) / $rat$(2)))){b <- bs, k <- ks}) {
+     Return 9
+   }
+ }
+ Return 0
+- : unit = ()
+```
+
+## Slice bounds as assertions
+
+`assert_slice_bounds` turns a bound `e1 + e2 <= |a|` without else into an
+assertion when the sideconditions pass generated it for a slice, and the
+instructions it guards begin by reading that slice. A generated bound carries
+the pass's insertion marker, the type annotation `bound` made here:
+
+```ocaml
+# let show il = print_endline (Al.Print.string_of_instrs (Il2al.Transpile.assert_slice_bounds il)) in
+  let r = {left = {file = "rule"; line = 2; column = 9}; right = {file = "rule"; line = 2; column = 17}} in
+  let bound = Il.Origin.slice_bound r in
+  let read x = letI (list x, accE (list "a", sliceP (nat 0, nat 1)) ~at:r ~note:(listT natT)) in
+  let check body = [
+    ifI (binE (`LeOp, nat 0 + nat 1, len (list "a")) ~at:r ~note:bound, body, []);
+    return (nat 0)
+  ] in
+  show (check [read "b"; return (list "b")]);
+  show (check [ifI (boolE false ~note:boolT, [read "b"; return (list "b")], [])]);
+  show (check [read "unused"]);
+  show (check [letI (list "a", list "c"); read "b"; return (list "b")]);
+  show (check [appendI (nat 3, list "a"); read "b"; return (list "b")]);;
+ Assert (((0 + 1) <= |a|))
+ Let b = a[0 : 1]
+ Return b
+ Return 0
+
+ If (((0 + 1) <= |a|)) {
+   If (false) {
+     Let b = a[0 : 1]
+     Return b
+   }
+ }
+ Return 0
+
+ If (((0 + 1) <= |a|)) {
+   Let unused = a[0 : 1]
+ }
+ Return 0
+
+ If (((0 + 1) <= |a|)) {
+   Let a = c
+   Let b = a[0 : 1]
+   Return b
+ }
+ Return 0
+
+ If (((0 + 1) <= |a|)) {
+   a :+ 3
+   Let b = a[0 : 1]
+   Return b
+ }
+ Return 0
+- : unit = ()
+```
+
+A bound written in the rule is a condition of the rule, and stays a check even
+when the same read follows. With `a = []`, this returns 0; as an assertion, it
+would fail. The written bound has no marker, whatever its region: the same
+region as the slice (`r`), that of the premise (`p`), or none:
+
+```ocaml
+# let show il = print_endline (Al.Print.string_of_instrs (Il2al.Transpile.assert_slice_bounds il)) in
+  let r = {left = {file = "rule"; line = 2; column = 9}; right = {file = "rule"; line = 2; column = 17}} in
+  let p = {left = {file = "rule"; line = 3; column = 6}; right = {file = "rule"; line = 3; column = 22}} in
+  let check ~at_bound ~at_read = [
+    ifI (binE (`LeOp, nat 0 + nat 1, len (list "a")) ~at:at_bound ~note:boolT, [
+      letI (list "b", accE (list "a", sliceP (nat 0, nat 1)) ~at:at_read ~note:(listT natT));
+      return (list "b")
+    ], []);
+    return (nat 0)
+  ] in
+  show (check ~at_bound:r ~at_read:r);
+  show (check ~at_bound:p ~at_read:r);
+  show (check ~at_bound:no_region ~at_read:no_region);;
+ If (((0 + 1) <= |a|)) {
+   Let b = a[0 : 1]
+   Return b
+ }
+ Return 0
+
+ If (((0 + 1) <= |a|)) {
+   Let b = a[0 : 1]
+   Return b
+ }
+ Return 0
+
+ If (((0 + 1) <= |a|)) {
+   Let b = a[0 : 1]
+   Return b
+ }
+ Return 0
+- : unit = ()
+```
+
+A generated bound also loses its marker when it comes to stand for a written
+condition. Here the trap check gives `i <= j`, so the bound `j + 1 <= |a|`
+implies the written `i + 1 <= |a|` and `i <= |a|`. In the first case the
+written condition comes between the bound and the read, and
+`remove_trapped_ifs` removes it; `keep_slice_bounds`, run on the AL of each
+rule before the readability passes, drops the marker because the bound does
+not guard the read directly. In the second the written condition encloses the
+bound, and `remove_trapped_ifs` replaces it with the bound. Both stay checks:
+with `i = j = |a| = 0`, they return 0, and an assertion would fail.
+
+```ocaml
+# let pipeline il =
+    il
+    |> Il2al.Transpile.keep_slice_bounds
+    |> Il2al.Transpile.remove_trapped_ifs
+    |> Il2al.Transpile.assert_slice_bounds in
+  let show il = print_endline (Al.Print.string_of_instrs (pipeline il)) in
+  let r = {left = {file = "rule"; line = 2; column = 9}; right = {file = "rule"; line = 2; column = 17}} in
+  let bound () =
+    binE (`LeOp, var "j" + nat 1, len (list "a")) ~at:r ~note:(Il.Origin.slice_bound r) in
+  let read = [letI (list "b", slice (list "a") (var "j") (nat 1)); return (list "b")] in
+  let check outer inner = [
+    trap (cmp `GtOp (var "i") (var "j"));
+    ifI (outer, [ifI (inner, read, [])], []);
+    return (nat 0)
+  ] in
+  show (check (bound ()) (cmp `LeOp (var "i" + nat 1) (len (list "a"))));
+  show (check (cmp `LeOp (var "i") (len (list "a"))) (bound ()));
+  show [ifI (bound (), read, []); return (nat 0)];;
+ If ((i > j)) {
+   Trap
+ }
+ If (((j + 1) <= |a|)) {
+   Let b = a[j : 1]
+   Return b
+ }
+ Return 0
+
+ If ((i > j)) {
+   Trap
+ }
+ If (((j + 1) <= |a|)) {
+   Let b = a[j : 1]
+   Return b
+ }
+ Return 0
+
+ Assert (((j + 1) <= |a|))
+ Let b = a[j : 1]
+ Return b
+ Return 0
+- : unit = ()
+```
+
+The rules of a reduction are merged after `keep_slice_bounds`, and merging
+keeps one copy of equal conditions. A generated bound equal to a condition
+written in another rule, or to its negation, could then stand for the written
+one. `unmark_written_slice_bounds`, run on the AL of all rules of the group
+before they are merged, drops its marker. Here the first rule reads the slice
+under the generated bound, and the second has the same bound written, with
+`Return 0`. With `a = []`, the merged algorithm returns 0, and an assertion
+would fail. Merged in either order, by `unify_if` (two rules) or
+`merge_disjoint_ifs` (three), and with the generated copy under another
+condition, all stay checks:
+
+```ocaml
+# let pipeline ~unmark blocks =
+    let blocks = List.map Il2al.Transpile.keep_slice_bounds blocks in
+    let blocks =
+      if unmark then List.map (Il2al.Transpile.unmark_written_slice_bounds blocks) blocks
+      else blocks in
+    blocks
+    |> Il2al.Transpile.merge_blocks
+    |> Il2al.Transpile.enhance_readability
+    |> Il2al.Transpile.assert_slice_bounds in
+  let show ?(unmark = true) blocks =
+    print_endline (Al.Print.string_of_instrs (pipeline ~unmark blocks)) in
+  let r = {left = {file = "rule"; line = 2; column = 9}; right = {file = "rule"; line = 2; column = 17}} in
+  let bound ?(note = Il.Origin.slice_bound r) () =
+    binE (`LeOp, var "j" + nat 1, len (list "a")) ~at:r ~note in
+  let read = [letI (list "b", slice (list "a") (var "j") (nat 1)); return (list "b")] in
+  let generated = [ifI (bound (), read, [])] in
+  let written = [ifI (bound ~note:boolT (), [return (nat 0)], [])] in
+  let x k = cmp `EqOp (var "x") (nat k) in
+  show ~unmark:false [generated; written];
+  show [generated; written];
+  show [written; generated];
+  show [[ifI (x 0, generated, [])]; written];
+  show ~unmark:false [generated; [ifI (x 1, written, [])]; [ifI (x 2, written, [])]];
+  show [generated; [ifI (x 1, written, [])]; [ifI (x 2, written, [])]];
+  show [[ifI (x 1, written, [])]; generated; [ifI (x 2, written, [])]];
+  show [[ifI (x 0, generated, [])]; [ifI (x 1, written, [])]; [ifI (x 2, written, [])]];;
+ Assert (((j + 1) <= |a|))
+ Let b = a[j : 1]
+ Return b
+ Return 0
+
+ If (((j + 1) <= |a|)) {
+   Let b = a[j : 1]
+   Return b
+   Return 0
+ }
+
+ If (((j + 1) <= |a|)) {
+   Return 0
+   Let b = a[j : 1]
+   Return b
+ }
+
+ If (((j + 1) <= |a|)) {
+   If ((x = 0)) {
+     Let b = a[j : 1]
+     Return b
+   }
+   Return 0
+ }
+
+ Assert (((j + 1) <= |a|))
+ Let b = a[j : 1]
+ Return b
+ If ((x = 1)) {
+   Return 0
+ }
+ If ((x = 2)) {
+   Return 0
+ }
+
+ If (((j + 1) <= |a|)) {
+   Let b = a[j : 1]
+   Return b
+   If ((x = 1)) {
+     Return 0
+   }
+   If ((x = 2)) {
+     Return 0
+   }
+ }
+
+ If (((j + 1) <= |a|)) {
+   If ((x = 1)) {
+     Return 0
+   }
+   Let b = a[j : 1]
+   Return b
+   If ((x = 2)) {
+     Return 0
+   }
+ }
+
+ If (((j + 1) <= |a|)) {
+   If ((x = 0)) {
+     Let b = a[j : 1]
+     Return b
+   }
+   If ((x = 1)) {
+     Return 0
+   }
+   If ((x = 2)) {
+     Return 0
+   }
+ }
+- : unit = ()
+```

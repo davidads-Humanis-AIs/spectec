@@ -7217,6 +7217,8 @@ The external value :math:`{\mathit{externaddr}}` is :ref:`valid <valid-val>` wit
 
 #. Pop the value :math:`(\mathsf{v{\scriptstyle 128}}{.}\mathsf{const}~c_1)` from the stack.
 
+#. Assert: Due to validation, :math:`i < {|{{\mathrm{lanes}}}_{{{\mathsf{i}}{n}}{\mathsf{x}}{N}}(c_1)|}`.
+
 #. Let :math:`c` be :math:`{{\mathrm{inv}}_{{\mathit{lanes}}}}_{{{\mathsf{i}}{n}}{\mathsf{x}}{N}}({{\mathrm{lanes}}}_{{{\mathsf{i}}{n}}{\mathsf{x}}{N}}(c_1){}[{}[i] = {{\mathrm{pack}}}_{{\mathsf{i}}{n}}(c_2)])`.
 
 #. Push the value :math:`(\mathsf{v{\scriptstyle 128}}{.}\mathsf{const}~c)` to the stack.
@@ -7300,6 +7302,8 @@ The external value :math:`{\mathit{externaddr}}` is :ref:`valid <valid-val>` wit
 #. If :math:`{\mathrm{halfop}}({\mathit{vcvtop}})` is defined, then:
 
    a. Let :math:`{\mathit{half}}` be :math:`{\mathrm{halfop}}({\mathit{vcvtop}})`.
+
+   #. Assert: Due to validation, :math:`{\mathrm{half}}({\mathit{half}}, 0, M) + M \leq {|{{\mathrm{lanes}}}_{{{{\mathsf{i}}{n}}_1}{\mathsf{x}}{{M'}}}(c_1)|}`.
 
    #. Let :math:`{{\mathit{ci}}^\ast}` be :math:`{{\mathrm{lanes}}}_{{{{\mathsf{i}}{n}}_1}{\mathsf{x}}{{M'}}}(c_1){}[{\mathrm{half}}({\mathit{half}}, 0, M) : M]`.
 
@@ -7807,6 +7811,8 @@ The external value :math:`{\mathit{externaddr}}` is :ref:`valid <valid-val>` wit
 #. Let :math:`{\mathsf{i}}{n}` be the result for which :math:`{|{\mathsf{i}}{n}|}` :math:`=` :math:`N`.
 
 #. Let :math:`k` be the result for which :math:`{{\mathrm{bytes}}}_{{\mathsf{i}}{N}}(k)` :math:`=` :math:`z{.}\mathsf{mems}{}[0]{.}\mathsf{bytes}{}[i + {\mathit{ao}}{.}\mathsf{offset} : N / 8]`.
+
+#. Assert: Due to validation, :math:`j < {|{{\mathrm{lanes}}}_{{{\mathsf{i}}{n}}{\mathsf{x}}{M}}(c_1)|}`.
 
 #. Let :math:`c` be :math:`{{\mathrm{inv}}_{{\mathit{lanes}}}}_{{{\mathsf{i}}{n}}{\mathsf{x}}{M}}({{\mathrm{lanes}}}_{{{\mathsf{i}}{n}}{\mathsf{x}}{M}}(c_1){}[{}[j] = k])`.
 
@@ -12424,8 +12430,9 @@ Step_pure/vreplace_lane Lnn X N i
 3. Assert: Due to validation, (numtype_0 = $unpack(Lnn)).
 4. Assert: Due to validation, a value of value type V128 is on the top of the stack.
 5. Pop the value (V128.CONST c_1) from the stack.
-6. Let c be $inv_lanes_(Lnn X N, $lanes_(Lnn X N, c_1) with [i] replaced by $packnum_(Lnn, c_2)).
-7. Push the value (V128.CONST c) to the stack.
+6. Assert: Due to validation, (i < |$lanes_(Lnn X N, c_1)|).
+7. Let c be $inv_lanes_(Lnn X N, $lanes_(Lnn X N, c_1) with [i] replaced by $packnum_(Lnn, c_2)).
+8. Push the value (V128.CONST c) to the stack.
 
 Step_pure/vextunop sh_1 sh_2 vextunop
 1. Assert: Due to validation, a value of value type V128 is on the top of the stack.
@@ -12464,9 +12471,10 @@ Step_pure/vcvtop Lnn_2 X M Lnn_1 X M' vcvtop
 2. Pop the value (V128.CONST c_1) from the stack.
 3. If $halfop(vcvtop) is defined, then:
   a. Let ?(half) be $halfop(vcvtop).
-  b. Let ci* be $lanes_(Lnn_1 X M', c_1)[$half(half, 0, M) : M].
-  c. Let cj** be $setproduct_(`lane_(Lnn_2), $vcvtop__(Lnn_1 X M', Lnn_2 X M, vcvtop, ci)*).
-  d. If (|$inv_lanes_(Lnn_2 X M, cj*)*| > 0), then:
+  b. Assert: Due to validation, (($half(half, 0, M) + M) <= |$lanes_(Lnn_1 X M', c_1)|).
+  c. Let ci* be $lanes_(Lnn_1 X M', c_1)[$half(half, 0, M) : M].
+  d. Let cj** be $setproduct_(`lane_(Lnn_2), $vcvtop__(Lnn_1 X M', Lnn_2 X M, vcvtop, ci)*).
+  e. If (|$inv_lanes_(Lnn_2 X M, cj*)*| > 0), then:
     1) Let c be an element of $inv_lanes_(Lnn_2 X M, cj*)*.
     2) Push the value (V128.CONST c) to the stack.
 4. Else if ($zeroop(vcvtop) is not defined /\ (M = M')), then:
@@ -12705,8 +12713,9 @@ Step_read/vload_lane V128 N ao j
 7. Let M be (128 / N).
 8. Let Jnn be $jsize^-1(N).
 9. Let k be $ibytes__1^-1(N, $mem(z, 0).BYTES[(i + ao.OFFSET) : (N / 8)]).
-10. Let c be $inv_lanes_(Jnn X M, $lanes_(Jnn X M, c_1) with [j] replaced by k).
-11. Push the value (V128.CONST c) to the stack.
+10. Assert: Due to validation, (j < |$lanes_(Jnn X M, c_1)|).
+11. Let c be $inv_lanes_(Jnn X M, $lanes_(Jnn X M, c_1) with [j] replaced by k).
+12. Push the value (V128.CONST c) to the stack.
 
 Step_read/memory.size
 1. Let z be the current state.
@@ -20469,6 +20478,8 @@ The instruction sequence :math:`(\mathsf{block}~{\mathit{blocktype}}~{{\mathit{i
 
 #. Pop the value :math:`(\mathsf{v{\scriptstyle 128}}{.}\mathsf{const}~c_1)` from the stack.
 
+#. Assert: Due to validation, :math:`i < {|{{\mathrm{lanes}}}_{{{\mathsf{i}}{N}}{\mathsf{x}}{M}}(c_1)|}`.
+
 #. Let :math:`c` be :math:`{{{{\mathrm{lanes}}}_{{{\mathsf{i}}{N}}{\mathsf{x}}{M}}^{{-1}}}}{({{\mathrm{lanes}}}_{{{\mathsf{i}}{N}}{\mathsf{x}}{M}}(c_1){}[{}[i] = {{\mathrm{pack}}}_{{\mathsf{i}}{N}}(c_2)])}`.
 
 #. Push the value :math:`(\mathsf{v{\scriptstyle 128}}{.}\mathsf{const}~c)` to the stack.
@@ -21302,6 +21313,8 @@ The instruction sequence :math:`(\mathsf{block}~{\mathit{blocktype}}~{{\mathit{i
 #. Let :math:`{\mathsf{i}}{N}` be the result for which :math:`{|{\mathsf{i}}{N}|}` :math:`=` :math:`N`.
 
 #. Let :math:`k` be the result for which :math:`{{\mathrm{bytes}}}_{{\mathsf{i}}{N}}(k)` :math:`=` :math:`z{.}\mathsf{mems}{}[x]{.}\mathsf{bytes}{}[i + {\mathit{ao}}{.}\mathsf{offset} : N / 8]`.
+
+#. Assert: Due to validation, :math:`j < {|{{\mathrm{lanes}}}_{{{\mathsf{i}}{N}}{\mathsf{x}}{M}}(c_1)|}`.
 
 #. Let :math:`c` be :math:`{{{{\mathrm{lanes}}}_{{{\mathsf{i}}{N}}{\mathsf{x}}{M}}^{{-1}}}}{({{\mathrm{lanes}}}_{{{\mathsf{i}}{N}}{\mathsf{x}}{M}}(c_1){}[{}[j] = k])}`.
 
@@ -31512,8 +31525,9 @@ Step_pure/vreplace_lane Lnn X M i
 3. Assert: Due to validation, (numtype_0 = $lunpack(Lnn)).
 4. Assert: Due to validation, a value of value type V128 is on the top of the stack.
 5. Pop the value (V128.CONST c_1) from the stack.
-6. Let c be $inv_lanes_(Lnn X M, $lanes_(Lnn X M, c_1) with [i] replaced by $lpacknum_(Lnn, c_2)).
-7. Push the value (V128.CONST c) to the stack.
+6. Assert: Due to validation, (i < |$lanes_(Lnn X M, c_1)|).
+7. Let c be $inv_lanes_(Lnn X M, $lanes_(Lnn X M, c_1) with [i] replaced by $lpacknum_(Lnn, c_2)).
+8. Push the value (V128.CONST c) to the stack.
 
 Step_pure/vextunop sh_2 sh_1 vextunop
 1. Assert: Due to validation, a value of value type V128 is on the top of the stack.
@@ -31905,8 +31919,9 @@ Step_read/vload_lane V128 N x ao j
 7. Let M be ($vsize(V128) / N).
 8. Let Jnn be $jsize^-1(N).
 9. Let k be $ibytes__1^-1(N, $mem(z, x).BYTES[(i + ao.OFFSET) : (N / 8)]).
-10. Let c be $inv_lanes_(Jnn X M, $lanes_(Jnn X M, c_1) with [j] replaced by k).
-11. Push the value (V128.CONST c) to the stack.
+10. Assert: Due to validation, (j < |$lanes_(Jnn X M, c_1)|).
+11. Let c be $inv_lanes_(Jnn X M, $lanes_(Jnn X M, c_1) with [j] replaced by k).
+12. Push the value (V128.CONST c) to the stack.
 
 Step_read/memory.size x
 1. Let z be the current state.
