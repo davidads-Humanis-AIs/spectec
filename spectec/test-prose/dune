@@ -1,8 +1,8 @@
 (mdx
-  (libraries spectec)
+  (libraries spectec zarith util xl il al il2al)
   (deps
     (file ../src/exe-spectec/main.exe)
     (glob_files_rec ../_specification/*)
   )
-  (files TEST.md)
+  (files TEST.md TRAPPED.md)
 )

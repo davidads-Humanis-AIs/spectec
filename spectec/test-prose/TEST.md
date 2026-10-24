@@ -7659,9 +7659,7 @@ The external value :math:`{\mathit{externaddr}}` is :ref:`valid <valid-val>` wit
 
 #. Else:
 
-   a. Assert: Due to validation, :math:`i < {|z{.}\mathsf{elems}{}[y]{.}\mathsf{refs}|}`.
-
-   #. Push the value :math:`(\mathsf{i{\scriptstyle 32}}{.}\mathsf{const}~j)` to the stack.
+   a. Push the value :math:`(\mathsf{i{\scriptstyle 32}}{.}\mathsf{const}~j)` to the stack.
 
    #. Push the value :math:`z{.}\mathsf{elems}{}[y]{.}\mathsf{refs}{}[i]` to the stack.
 
@@ -7966,9 +7964,7 @@ The external value :math:`{\mathit{externaddr}}` is :ref:`valid <valid-val>` wit
 
 #. Else:
 
-   a. Assert: Due to validation, :math:`i < {|z{.}\mathsf{datas}{}[x]{.}\mathsf{bytes}|}`.
-
-   #. Push the value :math:`(\mathsf{i{\scriptstyle 32}}{.}\mathsf{const}~j)` to the stack.
+   a. Push the value :math:`(\mathsf{i{\scriptstyle 32}}{.}\mathsf{const}~j)` to the stack.
 
    #. Push the value :math:`(\mathsf{i{\scriptstyle 32}}{.}\mathsf{const}~z{.}\mathsf{datas}{}[x]{.}\mathsf{bytes}{}[i])` to the stack.
 
@@ -12636,14 +12632,13 @@ Step_read/table.init x y
 10. If (n = 0), then:
   a. Do nothing.
 11. Else:
-  a. Assert: Due to validation, (i < |$elem(z, y).REFS|).
-  b. Push the value (I32.CONST j) to the stack.
-  c. Push the value $elem(z, y).REFS[i] to the stack.
-  d. Execute the instruction (TABLE.SET x).
-  e. Push the value (I32.CONST (j + 1)) to the stack.
-  f. Push the value (I32.CONST (i + 1)) to the stack.
-  g. Push the value (I32.CONST (n - 1)) to the stack.
-  h. Execute the instruction (TABLE.INIT x y).
+  a. Push the value (I32.CONST j) to the stack.
+  b. Push the value $elem(z, y).REFS[i] to the stack.
+  c. Execute the instruction (TABLE.SET x).
+  d. Push the value (I32.CONST (j + 1)) to the stack.
+  e. Push the value (I32.CONST (i + 1)) to the stack.
+  f. Push the value (I32.CONST (n - 1)) to the stack.
+  g. Execute the instruction (TABLE.INIT x y).
 
 Step_read/load nt loadop_? ao
 1. Let z be the current state.
@@ -12786,14 +12781,13 @@ Step_read/memory.init x
 10. If (n = 0), then:
   a. Do nothing.
 11. Else:
-  a. Assert: Due to validation, (i < |$data(z, x).BYTES|).
-  b. Push the value (I32.CONST j) to the stack.
-  c. Push the value (I32.CONST $data(z, x).BYTES[i]) to the stack.
-  d. Execute the instruction (STORE I32 ?(8) $memarg0()).
-  e. Push the value (I32.CONST (j + 1)) to the stack.
-  f. Push the value (I32.CONST (i + 1)) to the stack.
-  g. Push the value (I32.CONST (n - 1)) to the stack.
-  h. Execute the instruction (MEMORY.INIT x).
+  a. Push the value (I32.CONST j) to the stack.
+  b. Push the value (I32.CONST $data(z, x).BYTES[i]) to the stack.
+  c. Execute the instruction (STORE I32 ?(8) $memarg0()).
+  d. Push the value (I32.CONST (j + 1)) to the stack.
+  e. Push the value (I32.CONST (i + 1)) to the stack.
+  f. Push the value (I32.CONST (n - 1)) to the stack.
+  g. Execute the instruction (MEMORY.INIT x).
 
 Step/local.set x
 1. Let z be the current state.
@@ -21160,9 +21154,7 @@ The instruction sequence :math:`(\mathsf{block}~{\mathit{blocktype}}~{{\mathit{i
 
 #. Else:
 
-   a. Assert: Due to validation, :math:`j < {|z{.}\mathsf{elems}{}[y]{.}\mathsf{refs}|}`.
-
-   #. Push the value :math:`({\mathit{at}}{.}\mathsf{const}~i)` to the stack.
+   a. Push the value :math:`({\mathit{at}}{.}\mathsf{const}~i)` to the stack.
 
    #. Push the value :math:`z{.}\mathsf{elems}{}[y]{.}\mathsf{refs}{}[j]` to the stack.
 
@@ -21469,9 +21461,7 @@ The instruction sequence :math:`(\mathsf{block}~{\mathit{blocktype}}~{{\mathit{i
 
 #. Else:
 
-   a. Assert: Due to validation, :math:`j < {|z{.}\mathsf{datas}{}[y]{.}\mathsf{bytes}|}`.
-
-   #. Push the value :math:`({\mathit{at}}{.}\mathsf{const}~i)` to the stack.
+   a. Push the value :math:`({\mathit{at}}{.}\mathsf{const}~i)` to the stack.
 
    #. Push the value :math:`(\mathsf{i{\scriptstyle 32}}{.}\mathsf{const}~z{.}\mathsf{datas}{}[y]{.}\mathsf{bytes}{}[j])` to the stack.
 
@@ -21965,7 +21955,7 @@ The instruction sequence :math:`(\mathsf{block}~{\mathit{blocktype}}~{{\mathit{i
 
    a. Do nothing.
 
-#. Else if :math:`j < {|z{.}\mathsf{elems}{}[y]{.}\mathsf{refs}|}`, then:
+#. Else:
 
    a. Let :math:`{\mathit{ref}}` be the reference value :math:`z{.}\mathsf{elems}{}[y]{.}\mathsf{refs}{}[j]`.
 
@@ -31842,14 +31832,13 @@ Step_read/table.init x y
 10. If (n = 0), then:
   a. Do nothing.
 11. Else:
-  a. Assert: Due to validation, (j < |$elem(z, y).REFS|).
-  b. Push the value (at.CONST i) to the stack.
-  c. Push the value $elem(z, y).REFS[j] to the stack.
-  d. Execute the instruction (TABLE.SET x).
-  e. Push the value (at.CONST (i + 1)) to the stack.
-  f. Push the value (I32.CONST (j + 1)) to the stack.
-  g. Push the value (I32.CONST (n - 1)) to the stack.
-  h. Execute the instruction (TABLE.INIT x y).
+  a. Push the value (at.CONST i) to the stack.
+  b. Push the value $elem(z, y).REFS[j] to the stack.
+  c. Execute the instruction (TABLE.SET x).
+  d. Push the value (at.CONST (i + 1)) to the stack.
+  e. Push the value (I32.CONST (j + 1)) to the stack.
+  f. Push the value (I32.CONST (n - 1)) to the stack.
+  g. Execute the instruction (TABLE.INIT x y).
 
 Step_read/load nt loadop_? x ao
 1. Let z be the current state.
@@ -31993,14 +31982,13 @@ Step_read/memory.init x y
 10. If (n = 0), then:
   a. Do nothing.
 11. Else:
-  a. Assert: Due to validation, (j < |$data(z, y).BYTES|).
-  b. Push the value (at.CONST i) to the stack.
-  c. Push the value (I32.CONST $data(z, y).BYTES[j]) to the stack.
-  d. Execute the instruction (STORE I32 ?(8) x $memarg0()).
-  e. Push the value (at.CONST (i + 1)) to the stack.
-  f. Push the value (I32.CONST (j + 1)) to the stack.
-  g. Push the value (I32.CONST (n - 1)) to the stack.
-  h. Execute the instruction (MEMORY.INIT x y).
+  a. Push the value (at.CONST i) to the stack.
+  b. Push the value (I32.CONST $data(z, y).BYTES[j]) to the stack.
+  c. Execute the instruction (STORE I32 ?(8) x $memarg0()).
+  d. Push the value (at.CONST (i + 1)) to the stack.
+  e. Push the value (I32.CONST (j + 1)) to the stack.
+  f. Push the value (I32.CONST (n - 1)) to the stack.
+  g. Execute the instruction (MEMORY.INIT x y).
 
 Step_read/ref.null ht
 1. Push the value REF.NULL_ADDR to the stack.
@@ -32234,7 +32222,7 @@ Step_read/array.init_elem x y
   a. Trap.
 15. If (n = 0), then:
   a. Do nothing.
-16. Else if (j < |$elem(z, y).REFS|), then:
+16. Else:
   a. Let ref be $elem(z, y).REFS[j].
   b. Push the value (REF.ARRAY_ADDR a) to the stack.
   c. Push the value (I32.CONST i) to the stack.

@@ -431,6 +431,326 @@ let unify_if_tail instr =
     ifI (c, insert_nop il1', insert_nop il2') ~at:at :: t
   | _ -> [ instr ]
 
+(* Remove checks implied by an earlier trap
+
+   For example, in
+
+     If (j + n > |a|) { Trap }
+     If (n = 0) { Nop }
+     Else if (j < |a|) { ... }
+
+   the last condition always holds. To see this, conditions on natural numbers
+   are read as polynomials p >= 0 with rational coefficients over atoms
+   (subexpressions that are not sums, products or divisions by a literal).
+
+   The facts used are the conditions of the enclosing ifs and of the preceding
+   ifs that trap. A fact is dropped when an instruction binds one of its
+   variables, and all facts are dropped after an instruction that may change
+   the state. A condition is removed only if evaluating it cannot fail, or
+   if each part of it that could fail (a call, an access, a conversion) has
+   already been evaluated, or is evaluated by the instructions it guards
+   before anything else happens. In particular, a division is exact whenever
+   it is used. *)
+
+module Poly = Map.Make (struct type t = string list let compare = Stdlib.compare end)
+
+let poly_const q = if Q.equal q Q.zero then Poly.empty else Poly.singleton [] q
+let poly_add p1 p2 =
+  Poly.union (fun _ q1 q2 ->
+    let q = Q.add q1 q2 in if Q.equal q Q.zero then None else Some q
+  ) p1 p2
+let poly_scale q p = if Q.equal q Q.zero then Poly.empty else Poly.map (Q.mul q) p
+let poly_sub p1 p2 = poly_add p1 (poly_scale Q.minus_one p2)
+let poly_mul p1 p2 =
+  Poly.fold (fun m1 q1 acc ->
+    Poly.fold (fun m2 q2 acc ->
+      poly_add acc (Poly.singleton (List.sort Stdlib.compare (m1 @ m2)) (Q.mul q1 q2))
+    ) p2 acc
+  ) p1 Poly.empty
+
+(* All atoms are natural numbers, so this is sufficient for p >= 0 *)
+let poly_nonneg p = Poly.for_all (fun _ q -> Q.geq q Q.zero) p
+
+let is_nat e = match e.note.it with Il.Ast.NumT `NatT -> true | _ -> false
+let is_other_num e = match e.note.it with Il.Ast.NumT (`IntT | `RatT | `RealT) -> true | _ -> false
+
+(* The polynomial for e, if e is known to be a natural number: by its type,
+   or as an operand of natural-number arithmetic (the AL drops the
+   projections that would give it the type nat) *)
+let rec poly_of_expr ?(nat = false) e =
+  let poly_of_expr' = poly_of_expr ~nat:true in
+  let ( let* ) = Option.bind in
+  if not (nat || is_nat e) || is_other_num e then None else
+  match e.it with
+  | NumE (`Nat z) -> Some (poly_const (Q.of_bigint z))
+  | BinE (`AddOp, e1, e2) ->
+    let* p1 = poly_of_expr' e1 in
+    let* p2 = poly_of_expr' e2 in
+    Some (poly_add p1 p2)
+  | BinE (`MulOp, e1, e2) ->
+    let* p1 = poly_of_expr' e1 in
+    let* p2 = poly_of_expr' e2 in
+    Some (poly_mul p1 p2)
+  (* $nat$($rat$(e1) / $rat$(z)), which is only defined if the division is exact *)
+  | CvtE ({it = BinE (`DivOp, {it = CvtE (e1, `NatT, `RatT); _},
+      {it = CvtE ({it = NumE (`Nat z); _}, `NatT, `RatT); _}); _}, `RatT, `NatT)
+    when Z.gt z Z.zero ->
+    let* p1 = poly_of_expr' e1 in
+    Some (poly_scale (Q.make Z.one z) p1)
+  | _ -> Some (Poly.singleton [Print.string_of_expr e] Q.one)
+
+(* Polynomials p with p >= 0 iff the condition holds *)
+let rec polys_of_cond c =
+  let poly_diff e1 e2 k =
+    let nat = is_nat e1 || is_nat e2 in
+    match poly_of_expr ~nat e1, poly_of_expr ~nat e2 with
+    | Some p1, Some p2 -> [poly_add (poly_sub p2 p1) (poly_const (Q.of_int k))]
+    | _ -> []
+  in
+  let is_zero e = match e.it with NumE (`Nat z) -> Z.equal z Z.zero | _ -> false in
+  let one e = { e with it = NumE (`Nat Z.one) } in
+  match c.it with
+  | BinE (`AndOp, c1, c2) -> polys_of_cond c1 @ polys_of_cond c2
+  | BinE (`LeOp, e1, e2) | BinE (`GeOp, e2, e1) -> poly_diff e1 e2 0
+  | BinE (`LtOp, e1, e2) | BinE (`GtOp, e2, e1) -> poly_diff e1 e2 (-1)
+  | BinE (`NeOp, e, e0) when is_zero e0 -> poly_diff (one e0) e 0
+  | BinE (`NeOp, e0, e) when is_zero e0 -> poly_diff (one e0) e 0
+  | _ -> []
+
+(* Is p >= 0 implied by the facts f >= 0? We try p - f, and p - f - q * m * f'
+   for each monomial m and coefficient q > 0 that cancels a negative term *)
+let poly_implied facts p =
+  let cancel r f =
+    Poly.fold (fun mr qr acc ->
+      if Q.geq qr Q.zero then acc else
+      Poly.fold (fun mf qf acc ->
+        let rec divide m = function
+          | [] -> Some m
+          | x :: xs ->
+            (match List.partition ((=) x) m with
+            | _ :: xs', m' -> divide (xs' @ m') xs
+            | [], _ -> None)
+        in
+        match divide mr mf with
+        | Some m when Q.lt qf Q.zero ->
+          poly_sub r (poly_mul (Poly.singleton m (Q.div qr qf)) f) :: acc
+        | _ -> acc
+      ) f acc
+    ) r []
+  in
+  List.exists (fun r ->
+    poly_nonneg r ||
+    List.exists (fun f -> List.exists poly_nonneg (cancel r f)) facts
+  ) (p :: List.map (poly_sub p) facts)
+
+(* The known conditions, plus the remaining literal of every clause
+   (a disjunction) whose other literals contradict them *)
+let propagate knowns clauses =
+  knowns @ List.filter_map (fun clause ->
+    match List.filter (fun l -> not (List.exists (conflicts l) knowns)) clause with
+    | [l] -> Some l
+    | _ -> None
+  ) clauses
+
+let mentions xs e = not (Free.IdSet.disjoint xs (Free.free_expr e))
+
+(* The bound n and index k of an iteration ^(k<n) that binds no other
+   variable *)
+let index_only (iter, xes) =
+  match iter with
+  | ListN (n, Some k)
+    when List.for_all (fun (x, _) -> x = k) xes && not (mentions (Free.IdSet.singleton k) n) ->
+    Some (n, k)
+  | _ -> None
+
+let rec implied knowns clauses c =
+  let knowns = propagate knowns clauses in
+  List.exists (fun k -> eq_cond k c) knowns ||
+  match c.it with
+  | BinE (`AndOp, c1, c2) -> implied knowns [] c1 && implied knowns [] c2
+  | IterE (c1, ie) ->
+    (match index_only ie with
+    | Some (n, k) ->
+      let knowns' = List.filter (fun c' -> not (mentions (Free.IdSet.singleton k) c')) knowns in
+      let c_k = binE (`LtOp, varE k ~note:natT, n) ~note:boolT in
+      implied (c_k :: knowns') [] c1
+    | None -> false)
+  | _ ->
+    let facts = List.concat_map polys_of_cond knowns in
+    match polys_of_cond c with
+    | [] -> false
+    | ps -> List.for_all (poly_implied facts) ps
+
+(* Does e read the stack or the context, which Push and Pop change? *)
+let reads_stack e =
+  let found = ref false in
+  let walk_expr walker e =
+    (match e.it with
+    | GetCurStateE | GetCurContextE _ | ContextKindE _ | TopValueE _ | TopValuesE _
+    | ChooseE _ | RelE _ | YetE _ -> found := true
+    | _ -> ());
+    Walk.base_unit_walker.walk_expr walker e
+  in
+  let walker = { Walk.base_unit_walker with walk_expr } in
+  walker.walk_expr walker e;
+  !found
+
+(* The subexpressions that are evaluated when e is. Each comes with None, or
+   with the bound and index (n, k) of the iteration ^(k<n) in which it is
+   evaluated for each k. *)
+let rec evaluated ?ctx e acc =
+  let go = evaluated ?ctx in
+  let acc = if reads_stack e then acc else (ctx, e) :: acc in
+  match e.it with
+  | CvtE (e1, _, _) | UnE (_, e1) | LenE e1 | OptE (Some e1) | LiftE e1
+  | IsCaseOfE (e1, _) | IsDefinedE e1 | AccE (e1, {it = DotP _; _}) -> go e1 acc
+  | BinE ((`AndOp | `OrOp | `ImplOp | `EquivOp), e1, _) -> go e1 acc
+  | BinE (_, e1, e2) | CatE (e1, e2) | MemE (e1, e2) | AccE (e1, {it = IdxP e2; _}) ->
+    go e2 (go e1 acc)
+  | AccE (e1, {it = SliceP (e2, e3); _}) -> go e3 (go e2 (go e1 acc))
+  | TupE es | ListE es | CaseE (_, es) -> List.fold_left (fun acc e -> go e acc) acc es
+  | CallE (_, args) | InvCallE (_, _, args) ->
+    List.fold_left (fun acc a -> match a.it with ExpA e -> go e acc | _ -> acc) acc args
+  | IterE (e1, ie) when Option.is_none ctx ->
+    (match index_only ie with
+    | Some (n, k) -> evaluated ~ctx:(n, k) e1 (go n acc)
+    | None -> acc)
+  | _ -> acc
+
+let same_ctx ctx1 ctx2 =
+  match ctx1, ctx2 with
+  | None, None -> true
+  | Some (n1, k1), Some (n2, k2) -> k1 = k2 && Eq.eq_expr n1 n2
+  | _ -> false
+
+(* Can evaluating e fail? Not if it is total, and each part of it that is not
+   has been evaluated (is in ev) *)
+let rec defined ev ?ctx e =
+  List.exists (fun (ctx', e') ->
+    Eq.eq_expr e e' &&
+    (same_ctx ctx ctx' ||
+     match ctx, ctx' with
+     | Some (_, k), None -> not (mentions (Free.IdSet.singleton k) e)
+     | _ -> false)
+  ) ev ||
+  let defined' = defined ev ?ctx in
+  match e.it with
+  | VarE _ | NumE _ | BoolE _ | OptE None -> true
+  | UnE (`NotOp, e1) | LenE e1 | CvtE (e1, `NatT, (`IntT | `RatT)) -> defined' e1
+  | BinE ((`AndOp | `OrOp | `ImplOp | `EquivOp | `EqOp | `NeOp
+    | `LtOp | `GtOp | `LeOp | `GeOp | `AddOp | `MulOp), e1, e2) ->
+    defined' e1 && defined' e2
+  (* x?{x <- x'}, and likewise for * and + *)
+  | IterE ({it = VarE x; _}, (_, [(x', {it = VarE _; _})])) when x = x' -> true
+  | IterE (e1, ie) when Option.is_none ctx ->
+    (match index_only ie with
+    | Some (n, k) -> defined' n && defined ev ~ctx:(n, k) e1
+    | None -> false)
+  | _ -> false
+
+(* Instructions that do not change the state (but maybe the stack) *)
+let rec keeps_state il =
+  List.for_all (fun i ->
+    match i.it with
+    | AssertI _ | PushI _ | PopI _ | PopAllI _ | LetI _ | NopI
+    | TrapI | FailI | ThrowI _ | ReturnI _ -> true
+    | IfI (_, il1, il2) | EitherI (il1, il2) -> keeps_state il1 && keeps_state il2
+    | OtherwiseI il1 -> keeps_state il1
+    | _ -> false
+  ) il
+
+(* What the instructions il evaluate before they branch, change the state,
+   or bind one of the variables xs. Only assignments whose variables are used
+   later count, as others may be removed. *)
+let rec evaluated_by xs il acc =
+  match il with
+  | [] -> acc
+  | i :: il' ->
+    match i.it with
+    | NopI | PushI _ | AssertI _ -> evaluated_by xs il' acc
+    | LetI (lhs, rhs) ->
+      let ys = Free.free_expr lhs in
+      let used = List.exists (fun i' -> not (Free.IdSet.disjoint ys (Free.free_instr i'))) il' in
+      let acc = if used then evaluated rhs acc else acc in
+      if Free.IdSet.disjoint xs ys then evaluated_by xs il' acc else acc
+    | _ -> acc
+
+(* Variables bound by instructions *)
+let rec bound_vars il =
+  List.fold_left (fun acc i ->
+    Free.IdSet.union acc (match i.it with
+    | LetI (e, _) | PopI e | PopAllI e -> Free.free_expr e
+    | IfI (_, il1, il2) | EitherI (il1, il2) -> Free.IdSet.union (bound_vars il1) (bound_vars il2)
+    | OtherwiseI il1 | EnterI (_, _, il1) -> bound_vars il1
+    | ForEachI (xes, il1) -> Free.IdSet.union (Free.IdSet.of_list (List.map fst xes)) (bound_vars il1)
+    | _ -> Free.IdSet.empty)
+  ) Free.IdSet.empty il
+
+let traps il = List.exists (fun i -> i.it = TrapI) il
+
+(* For `If c_1 { If c_2 { ... Trap } }`, the conditions c_1, c_2 *)
+let rec trap_conds il =
+  match il with
+  | [{it = IfI (c, il1, []); _}] when traps il1 -> Some [c]
+  | [{it = IfI (c, il1, []); _}] -> Option.map (fun cs -> c :: cs) (trap_conds il1)
+  | _ -> None
+
+(* Walk the instructions, keeping the conditions of the enclosing ifs (knowns),
+   the clauses that hold because an earlier instruction did not trap, and the
+   expressions that have been evaluated (ev).
+   Only conditions that need the clauses are acted on: those implied by the
+   enclosing ifs alone are left to remove_unnecessary_branch. *)
+let remove_trapped_ifs instrs =
+  let rec walk knowns clauses ev il =
+    match il with
+    | [] -> []
+    | instr :: il' ->
+      let instrs = walk_instr knowns clauses ev il' instr in
+      let knowns', clauses', ev' =
+        if not (keeps_state [instr]) then [], [], [] else
+        let xs = bound_vars [instr] in
+        let ev = match instrs, instr.it with
+          | [{it = IfI (c', _, _); _}], IfI (c, _, _) when Eq.eq_expr c c' -> evaluated c ev
+          | _ -> ev
+        in
+        List.filter (fun c -> not (mentions xs c)) knowns,
+        List.filter (List.for_all (fun c -> not (mentions xs c))) clauses,
+        List.filter (fun (ctx, e) ->
+          not (mentions xs e) &&
+          match ctx with Some (n, _) -> not (mentions xs n) | None -> true
+        ) ev
+      in
+      let clause =
+        match trap_conds [instr], instr.it with
+        | Some cs, _ -> List.map neg cs
+        | None, IfI (c, il1, il2) when traps il1 && not (traps il2) -> [neg c]
+        | None, IfI (c, il1, il2) when traps il2 && not (traps il1) -> [c]
+        | _ -> []
+      in
+      let clauses'' =
+        if clause <> [] && keeps_state [instr] &&
+          List.for_all (fun c -> not (reads_stack c || mentions (bound_vars [instr]) c)) clause
+        then clause :: clauses' else clauses'
+      in
+      instrs @ walk knowns' clauses'' ev' il'
+  and by_clauses knowns clauses c =
+    implied knowns clauses c && not (implied knowns [] c)
+  (* c' (c or its negation) follows from the facts, and evaluating c cannot
+     fail unless the instructions il that replace the if fail too *)
+  and removable knowns clauses ev il c c' =
+    by_clauses knowns clauses c' && defined (evaluated_by (Free.free_expr c) il ev) c
+  and walk_instr knowns clauses ev il' instr =
+    match instr.it with
+    | IfI (c, il1, _) when removable knowns clauses ev (il1 @ il') c c -> walk knowns clauses ev il1
+    | IfI (c, _, il2) when removable knowns clauses ev (il2 @ il') c (neg c) -> walk knowns clauses ev il2
+    | IfI (c, il1, il2) ->
+      let knowns1, knowns2 = if reads_stack c then knowns, knowns else c :: knowns, neg c :: knowns in
+      let ev' = evaluated c ev in
+      [ ifI (c, walk knowns1 clauses ev' il1, walk knowns2 clauses ev' il2) ~at:instr.at ]
+    | _ -> [ instr ]
+  in
+  walk [] [] [] instrs
+
 let remove_unnecessary_branch =
   let rec remove_unnecessary_branch' path_cond instr =
     let new_ = List.concat_map (remove_unnecessary_branch' path_cond) in
@@ -884,6 +1204,7 @@ let rec enhance_readability instrs =
     |> remove_pre_trap
     |> remove_dead_pop_push
     |> unify_if
+    |> remove_trapped_ifs
     |> unify_multi_if
     |> infer_else
     |> List.concat_map remove_unnecessary_branch
